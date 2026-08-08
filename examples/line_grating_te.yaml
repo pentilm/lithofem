@@ -1,0 +1,25 @@
+# EUV absorber line grating, 1:1 duty, TE (M8-1 validation case)
+schema_version: 1
+domain: {Lx: 48, Ly: 8, z_min: -16, z_max: 56}
+materials:
+  absorber: {n: 0.95, k: 0.031}
+layers: []
+frustums:
+  - vertices: [[0, 0], [24, 0], [24, 8], [0, 8]]
+    z0: 0
+    h: 40
+    alpha: 90
+    epsilon: absorber
+wavelength: 13.5
+sources:
+  - type: planewave
+    incidence: {theta: 6, phi: 0, from: top}
+    polarization: s
+fem: {order: 3, elems_per_wavelength: 8}
+boundaries:
+  pml: {thickness: 0.75}
+output:
+  planes:
+    - {z: 50, quantities: [E], resolution: [32, 4], file: top.h5}
+    - {z: -10, quantities: [E], resolution: [32, 4], file: bottom.h5}
+  orders: {enabled: true}

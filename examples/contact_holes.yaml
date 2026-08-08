@@ -1,0 +1,26 @@
+# 3D square contact-hole array with 85-deg walls (M8-4 validation case)
+schema_version: 1
+domain: {Lx: 32, Ly: 32, z_min: -14, z_max: 40}
+materials:
+  absorber: {n: 0.95, k: 0.031}
+layers:
+  - {z: [0, 26], material: absorber}
+frustums:
+  - vertices: [[10, 10], [22, 10], [22, 22], [10, 22]]
+    z0: 0
+    h: 26
+    alpha: 85
+    epsilon: 1.0
+wavelength: 13.5
+sources:
+  - type: planewave
+    incidence: {theta: 6, phi: 0, from: top}
+    polarization: s
+fem: {order: 3, elems_per_wavelength: 4}
+boundaries:
+  pml: {thickness: 0.75}
+output:
+  planes:
+    - {z: 34, quantities: [E], resolution: [16, 16], file: top.h5}
+    - {z: -8, quantities: [E], resolution: [16, 16], file: bottom.h5}
+  orders: {enabled: true}

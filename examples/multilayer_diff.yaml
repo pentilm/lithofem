@@ -1,0 +1,26 @@
+# Artificial difference layer on an absorber stack (M6-style validation case)
+schema_version: 1
+domain: {Lx: 10, Ly: 10, z_min: 0, z_max: 34}
+materials:
+  absorber: {n: 0.95, k: 0.031}
+  diff: {epsilon: [1.9, 0.15]}
+layers:
+  - {z: [0, 16], material: absorber}
+frustums:
+  - vertices: [[0, 0], [10, 0], [10, 10], [0, 10]]
+    z0: 16
+    h: 8
+    alpha: 90
+    epsilon: diff
+wavelength: 13.5
+sources:
+  - type: planewave
+    incidence: {theta: 6, phi: 0, from: top}
+    polarization: s
+fem: {order: 3, elems_per_wavelength: 4}
+boundaries:
+  pml: {thickness: 0.75}
+output:
+  planes:
+    - {z: 30, quantities: [E, H], resolution: [16, 16], file: nearfield.h5}
+  orders: {enabled: true}

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lithofem"
+version = "0.1.0.dev0"
+description = "Frequency-domain finite-element lithography mask near-field simulator"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "gmsh",
+    "shapely>=2.0",
+    "h5py",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy", "pyvista"]
+
+[project.scripts]
+lithofem = "lithofem.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "NPY"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "fast: quick tests, part of `lithofem selftest --fast`",
+    "full: slower tests, part of `lithofem selftest --full` only",
+    "gpu: requires a CUDA GPU (auto-skipped when unavailable)",
+    "cudss: requires the cuDSS library (auto-skipped when unavailable)",
+]

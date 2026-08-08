@@ -1,0 +1,19 @@
+# Uniform current sheet radiating in vacuum (local-source example, M6b)
+schema_version: 1
+domain: {Lx: 10, Ly: 10, z_min: 0, z_max: 60}
+materials: {}
+layers: []
+frustums: []
+wavelength: 50
+sources:
+  - type: sheet
+    corner: [0, 0, 30]
+    edges: [[10, 0, 0], [0, 10, 0]]
+    current: [[1, 0], [0, 0], [0, 0]]
+    phase_gradient: [0, 0]
+fem: {order: 3, elems_per_wavelength: 8}
+output:
+  planes:
+    - {z: 45, quantities: [E, H], resolution: [8, 8], file: above.h5}
+    - {z: 15, quantities: [E], resolution: [8, 8], file: below.h5}
+  orders: {enabled: false}

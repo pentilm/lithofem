@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# build products — never committed
+build/
+*.o
+*.a
+*.so
+solver/bin/
+
+# run outputs
+*.msh
+*.h5
+*.vtu
+*.pvtu
+*.pvd
+results/
+outdir/
