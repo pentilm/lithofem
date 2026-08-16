@@ -117,6 +117,7 @@ def test_v2m4_max_parallel_cap(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.cudss
+@pytest.mark.multigpu
 def test_v2m4_r2_10_multi_gpu_physical(tmp_path: Path) -> None:
     """R2-10 (V2-M4 ⊕): real multi-GPU sweep — distinct physical card
     bindings, results identical to serial, and a concurrency speedup.

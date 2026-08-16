@@ -24,7 +24,9 @@ def _log(fp: Any, event: str, **kw: Any) -> None:
 
 
 def run(config_path: str | Path, outdir: str | Path,
-        device: str | None = None, assembly: str | None = None) -> Path:
+        device: str | None = None, assembly: str | None = None,
+        mesh: str | Path | None = None, mesh_cache: str | Path | None = None,
+        dry_run: bool = False) -> Path:
     """Full pipeline: validate -> mesh -> solve (all groups) -> outputs.
 
     Returns the output directory. Used by both the CLI and the thin Python
@@ -54,10 +56,30 @@ def run(config_path: str | Path, outdir: str | Path,
     with open(outdir / "run_log.jsonl", "w") as log:
         _log(log, "start", config=str(config_path), version=__version__)
         t0 = time.time()
-        prep = driver.prepare(model, outdir)
+        prep = driver.prepare(model, outdir, mesh=mesh, cache_dir=mesh_cache)
         _log(log, "mesh", seconds=round(time.time() - t0, 3),
              regions=prep.mesh_info.n_regions,
              region_volumes=prep.mesh_info.region_volumes)
+
+        if dry_run:
+            # pre-flight: report size and memory cost, then stop before the
+            # expensive stages so an oversized run is caught up front rather
+            # than discovered through a mid-run fallback to the CPU solver
+            pr = driver.probe(prep)
+            _log(log, "probe", ndof=pr.ndof, elements=pr.elements,
+                 vram_estimate_gb=round(pr.vram_estimate_gb, 2),
+                 free_vram_gb=pr.free_vram_gb, fits_on_gpu=pr.fits_on_gpu)
+            print(f"dry run: {pr.ndof:,} complex unknowns, "
+                  f"{pr.elements:,} elements")
+            print(f"  GPU direct solver needs about "
+                  f"{pr.vram_estimate_gb:.1f} GB of device memory")
+            if pr.free_vram_gb is not None:
+                verdict = ("fits" if pr.fits_on_gpu else
+                           "DOES NOT FIT -> the run would fall back to the "
+                           "CPU solver")
+                print(f"  {pr.free_vram_gb:.1f} GB free on the card: {verdict}")
+            print("  no solve performed (--dry-run)")
+            return outdir
 
         solved_groups = list(range(len(model.groups)))
         sweep_error = ""
@@ -133,6 +155,17 @@ def main(argv: list[str] | None = None) -> int:
     ap_run.add_argument("-o", "--outdir", required=True)
     ap_run.add_argument("--device", choices=["cpu", "cuda"], default=None,
                         help="override solver.device from the config")
+    ap_run.add_argument("--mesh", default=None,
+                        help="use this existing mesh.msh instead of "
+                             "generating one (its derived solver meshes must "
+                             "sit next to it)")
+    ap_run.add_argument("--mesh-cache", default=None,
+                        help="directory for reusing generated meshes across "
+                             "runs of the same geometry (also settable via "
+                             "LITHOFEM_MESH_CACHE)")
+    ap_run.add_argument("--dry-run", action="store_true",
+                        help="mesh, report problem size and GPU memory cost, "
+                             "then stop without solving")
     ap_run.add_argument("-a", "--assembly", choices=["cpu", "gpu"],
                         default=None,
                         help="override fem.assembly from the config (v2.5 "
@@ -146,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run":
         try:
             run(args.config, args.outdir, device=args.device,
-                assembly=args.assembly)
+                assembly=args.assembly, mesh=args.mesh,
+                mesh_cache=args.mesh_cache, dry_run=args.dry_run)
         except Exception as e:  # noqa: BLE001 - single clean error surface
             from .config import ConfigError
 

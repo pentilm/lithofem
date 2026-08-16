@@ -1,4 +1,4 @@
-"""Conformal tetrahedral mesh generation with Gmsh/OCC (docs/configuration.md).
+"""Conformal tetrahedral mesh generation with Gmsh/OCC (docs/configuration.md, M3).
 
 Pipeline: per-slab background boxes + per-frustum ruled lofts (mitre offsets
 give a polytope, so a 2-section loft with matched vertex ordering is exact)
@@ -15,6 +15,7 @@ Boundary attributes: 1 = PEC z-min (bottom of lower PML), 2 = PEC z-max,
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +41,30 @@ class MeshInfo:
     path: str
     region_volumes: dict[int, float]  # attribute -> exact CAD volume
     n_regions: int
+
+
+def mesh_info_from_file(model: Model, msh_path: str | Path) -> MeshInfo:
+    """Rebuild the MeshInfo summary for a mesh that was not generated here.
+
+    Used by the reuse paths (cached mesh, user-supplied mesh). Volumes are
+    summed from the mesh itself rather than from CAD, so this doubles as a
+    sanity check that the supplied mesh actually carries the region
+    attributes the model expects.
+    """
+    from . import meshcheck
+
+    stats = meshcheck.load_stats(str(msh_path))
+    n_expected = len(model_to_solve_json(model)["regions"])
+    missing = set(range(1, n_expected + 1)) - set(stats.region_volumes)
+    if missing:
+        raise ValueError(
+            f"{msh_path} is missing region attributes {sorted(missing)}; the "
+            f"model expects {n_expected} regions. Supply a mesh generated "
+            "from this same configuration."
+        )
+    return MeshInfo(path=str(msh_path),
+                    region_volumes=dict(stats.region_volumes),
+                    n_regions=len(stats.region_volumes))
 
 
 def mfem_mesh_path(msh_path: str | Path) -> Path:
@@ -305,6 +330,38 @@ def _check_periodic_safety(model: Model) -> None:
                 )
 
 
+def _set_mesh_algorithm(algorithm: str = "delaunay",
+                        mesh_threads: int = 1) -> None:
+    """Select the 3D meshing algorithm and thread count.
+
+    The default is gmsh's classic Delaunay (Algorithm3D = 1) - deliberately.
+    HXT (= 10) meshes the same geometry about twice as fast and with ~10%
+    fewer elements, and passes every geometric equivalence check, but at
+    equal target size those fewer elements cost accuracy exactly where TM
+    polarization is hardest (field jumps at material interfaces): the M8-1
+    TM-vs-RCWA acceptance case degrades from 5.9e-4 / 1.6e-4 to 1.66e-3 /
+    1.11e-3, through its 1e-3 gate (measured against the independent RCWA
+    reference in the test suite). Meshing is ~1 s of a
+    ~55 s solve, so the default buys reproducible accuracy with the speed of
+    the mesher being a non-factor; `fem.mesh_algorithm: hxt` remains
+    available for large geometries where meshing time actually matters.
+
+    Threads default to 1 because gmsh's threaded meshing (either algorithm)
+    is not run-to-run reproducible, and a mesh that moves drags the
+    discretization error with it. `fem.mesh_threads` opts in.
+
+    Environment overrides (LITHOFEM_MESH_ALGO3D numeric, LITHOFEM_MESH_THREADS)
+    take precedence; the regression tests use them for A/B comparisons.
+    """
+    default_algo = "10" if algorithm == "hxt" else "1"
+    algo = int(os.environ.get("LITHOFEM_MESH_ALGO3D", default_algo))
+    threads = int(os.environ.get("LITHOFEM_MESH_THREADS", str(mesh_threads)))
+    gmsh.option.setNumber("Mesh.Algorithm3D", algo)
+    gmsh.option.setNumber("General.NumThreads", threads)
+    if algo == 10:
+        gmsh.option.setNumber("Mesh.MaxNumThreads3D", threads)
+
+
 def generate(model: Model, out_path: str | Path, verbose: bool = False) -> MeshInfo:
     """Generate mesh.msh (4.1) for the expanded model. Returns CAD volumes."""
     doc = model_to_solve_json(model)
@@ -415,6 +472,8 @@ def generate(model: Model, out_path: str | Path, verbose: bool = False) -> MeshI
 
         _corner_refinement(model, base_size)
 
+        _set_mesh_algorithm(model.fem.mesh_algorithm,
+                            model.fem.mesh_threads)
         gmsh.model.mesh.generate(3)
         gmsh.model.mesh.renumberNodes()  # contiguous tags == file numbering
 

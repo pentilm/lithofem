@@ -350,7 +350,7 @@ double umfpack_symbolic_estimate_gb(const ComplexSparseMatrix &Ac)
 }
 
 
-// ---- docs/architecture section of README: thin internal interfaces (soft contract) ---------------
+// ---- docs/physics.md thin internal interfaces (soft contract) ---------------
 // IAssembler: mesh + parameters -> (complex operator, eliminated X/B).
 // ILinearSolver: operator + RHS -> solution. MFEM/UMFPACK are the default
 // implementations; replacing either only requires honoring these calls.
@@ -463,6 +463,7 @@ int main(int argc, char *argv[])
    const char *import_solution = "";
    double mem_limit_gb = 0.0;
    double gpu_mem_limit_gb = 0.0;
+   bool probe_only = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "periodic mesh (.per.msh)");
@@ -475,6 +476,9 @@ int main(int argc, char *argv[])
    args.AddOption(&device_config, "-d", "--device", "cpu | cuda (overrides solve.json)");
    args.AddOption(&assembly_config, "-a", "--assembly",
                   "cpu | gpu matrix assembly (overrides solve.json fem.assembly)");
+   args.AddOption(&probe_only, "-probe", "--probe", "-no-probe", "--no-probe",
+                  "report the problem size and exit before assembly "
+                  "(pre-flight cost estimate)");
    args.AddOption(&export_prefix, "-es", "--export-system",
                   "write A (MatrixMarket complex) + RHS, then exit");
    args.AddOption(&import_solution, "-is", "--import-solution",
@@ -653,6 +657,15 @@ int main(int argc, char *argv[])
    ND_FECollection fec(prob.order, 3);
    FiniteElementSpace fes(&mesh, &fec);
    std::printf("ndof: %d\n", fes.GetTrueVSize());
+
+   if (probe_only)
+   {
+      // Pre-flight: the caller wants the problem size (and from it the memory
+      // cost) before committing to a run. Everything expensive is downstream.
+      std::printf("probe_ndof %d\nprobe_elements %d\nlithofem_solve: OK\n",
+                  fes.GetTrueVSize(), mesh.GetNE());
+      return 0;
+   }
 
    Array<int> ess_bdr(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0);
    ess_bdr = 1;

@@ -22,6 +22,7 @@ from lithofem import config, driver, incident
 
 pytestmark = [
     pytest.mark.full,
+    pytest.mark.gpu_ok,
     pytest.mark.skipif(not driver.SOLVER_BIN.exists(),
                        reason="lithofem_solve not built"),
 ]
@@ -108,6 +109,10 @@ def _solve(c: dict, tmp: Path, order: int | None = None) -> tuple:
     return model, prep, meta
 
 
+# Always on CPU: an explicit end-to-end anchor for the CPU solver path,
+# which is also the automatic fallback path and so must stay verified in
+# its own right, not only through the GPU/CPU equivalence tests.
+@pytest.mark.cpu_reference
 @pytest.mark.parametrize("wl", [13.5, 193.0])
 def test_m6_1_pure_multilayer_zero_scattering(wl: float, tmp_path: Path) -> None:
     c = _multilayer_config(wl, 6.0, "s", diff_layer=False)

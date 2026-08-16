@@ -1,13 +1,15 @@
 """Pipeline driver: config -> mesh + solve.json -> C++ solve -> results.
 
-Stage boundaries follow docs/physics.md The solve.json written here extends
+Stage boundaries follow the architecture section of the README. The solve.json written here extends
 config.model_to_solve_json with the per-group incident tables (M6).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -42,16 +44,176 @@ class Prepared:
     mesh_info: meshgen.MeshInfo
 
 
-def prepare(model: cfg.Model, workdir: str | Path) -> Prepared:
+def mesh_key(model: cfg.Model) -> str:
+    """Content hash of everything the mesher reads.
+
+    Deliberately explicit rather than "hash the whole model": a cache hit must
+    imply an identical mesh, so the key lists the fields meshgen.generate
+    actually consumes. Note what is absent — `fem.order`, the sources and the
+    solver settings do not change the mesh, so a p-refinement study or an
+    incidence-angle sweep reuses one mesh.
+    """
+    doc = cfg.model_to_solve_json(model)
+    payload = {
+        "domain": [model.domain.lx, model.domain.ly,
+                   model.domain.z_min, model.domain.z_max],
+        "slabs": list(model.slabs),
+        "wavelength": model.wavelength,
+        "lateral_bc": model.lateral_bc,
+        "pml": [model.pml.thickness_wavelengths, model.pml.order,
+                model.pml.target_reflection],
+        "epw": model.fem.elems_per_wavelength,
+        "corner_refine": [model.fem.corner_refine_radius,
+                          model.fem.corner_refine_factor],
+        "regions": doc["regions"],
+        "frustums": [
+            [[list(xy) for xy in f.geom.base.exterior.coords],
+             f.geom.z0, f.geom.h, f.geom.alpha, f.eps.real, f.eps.imag]
+            for f in model.frustums
+        ],
+        # meshing behaviour itself, so an algorithm change cannot serve a
+        # stale mesh from a previous version
+        "algo": os.environ.get(
+            "LITHOFEM_MESH_ALGO3D",
+            "10" if model.fem.mesh_algorithm == "hxt" else "1"),
+        # threads too: a mesh produced with threads > 1 is not reproducible,
+        # so it must never satisfy a deterministic (threads = 1) request
+        "threads": os.environ.get("LITHOFEM_MESH_THREADS",
+                                  str(model.fem.mesh_threads)),
+        "v": 3,
+    }
+    blob = json.dumps(payload, sort_keys=True, default=str).encode()
+    return hashlib.sha256(blob).hexdigest()[:24]
+
+
+def _mesh_siblings(mesh_path: Path) -> list[Path]:
+    """mesh.msh plus the derived files the solver consumes."""
+    out = [mesh_path, meshgen.mfem_mesh_path(mesh_path)]
+    per = meshgen.mfem_periodic_mesh_path(mesh_path)
+    if per != mesh_path:
+        out.append(per)
+    return [p for p in out if p.exists()]
+
+
+def prepare(
+    model: cfg.Model, workdir: str | Path, mesh: str | Path | None = None,
+    cache_dir: str | Path | None = None,
+) -> Prepared:
+    """Mesh the model and write solve.json into `workdir`.
+
+    `mesh` supplies an existing mesh.msh instead of generating one (its
+    derived siblings must sit next to it, as produced by a previous run).
+    `cache_dir`, or the LITHOFEM_MESH_CACHE environment variable, enables
+    reuse of previously generated meshes keyed on `mesh_key`; it is off by
+    default so that the production path never depends on cache correctness.
+    """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     mesh_path = workdir / "mesh.msh"
-    info = meshgen.generate(model, mesh_path)
+
+    if mesh is not None:
+        src = Path(mesh)
+        if not src.exists():
+            raise FileNotFoundError(f"supplied mesh not found: {src}")
+        for p in _mesh_siblings(src):
+            shutil.copyfile(p, workdir / p.name)
+        required = [meshgen.mfem_mesh_path(mesh_path)]
+        if model.lateral_bc == "periodic":
+            required.append(meshgen.mfem_periodic_mesh_path(mesh_path))
+        for req in required:
+            if not req.exists():
+                raise FileNotFoundError(
+                    f"{src} has no derived solver mesh next to it "
+                    f"({req.name}); pass a mesh produced by a previous "
+                    "LithoFEM run, or let LithoFEM generate one"
+                )
+        info = meshgen.mesh_info_from_file(model, mesh_path)
+    else:
+        cache = cache_dir or os.environ.get("LITHOFEM_MESH_CACHE")
+        slot = Path(cache) / mesh_key(model) if cache else None
+        if slot is not None and (slot / "mesh.msh").exists():
+            for p in _mesh_siblings(slot / "mesh.msh"):
+                shutil.copyfile(p, workdir / p.name)
+            info = meshgen.mesh_info_from_file(model, mesh_path)
+        else:
+            info = meshgen.generate(model, mesh_path)
+            if slot is not None:
+                slot.mkdir(parents=True, exist_ok=True)
+                for p in _mesh_siblings(mesh_path):
+                    shutil.copyfile(p, slot / p.name)
+
     sj = workdir / "solve.json"
     with open(sj, "w") as f:
         json.dump(full_solve_json(model), f, indent=1)
     return Prepared(model=model, workdir=workdir, mesh_path=mesh_path,
                     solve_json_path=sj, mesh_info=info)
+
+
+def vram_estimate_gb(ndof: int) -> float:
+    """Device memory the GPU direct solver needs for a system of `ndof`.
+
+    Empirical fit to the measured cuDSS factor footprint on curl-curl systems
+    from this code (0.40 / 4.00 / 7.90 / 35.0 GB at 52k / 283k / 461k / 1.34M
+    complex unknowns); the fill-in growth makes it super-linear. The fit
+    reproduces all four points to better than 1%, but it is a fit, not a
+    bound: treat it as a planning number, not a guarantee.
+    """
+    return 7.9 * (ndof / 461_000.0) ** 1.39
+
+
+def free_vram_gb(gpu_id: int = 0) -> float | None:
+    """Free device memory in GB, or None when no GPU is visible."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits",
+             "-i", str(gpu_id)],
+            capture_output=True, text=True, timeout=20)
+        if out.returncode != 0:
+            return None
+        return float(out.stdout.strip().splitlines()[0]) / 1024.0
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+@dataclass
+class Probe:
+    """Pre-flight estimate: how big is this problem, and will it fit?"""
+    ndof: int
+    elements: int
+    vram_estimate_gb: float
+    free_vram_gb: float | None
+    fits_on_gpu: bool | None
+
+
+def probe(prep: Prepared, group: int = 0, solver_bin: Path | None = None,
+          timeout: int = 600) -> Probe:
+    """Report problem size and memory cost without solving.
+
+    Runs the solver far enough to build the finite-element space and stops.
+    Use before a long run to find out whether the GPU direct solver will fit,
+    instead of discovering it mid-run through the fallback.
+    """
+    binp = solver_bin or SOLVER_BIN
+    per_mesh = meshgen.mfem_periodic_mesh_path(prep.mesh_path)
+    res = subprocess.run(
+        [str(binp), "-m", str(per_mesh), "-j", str(prep.solve_json_path),
+         "-o", str(prep.workdir), "-g", str(group), "--probe"],
+        capture_output=True, text=True, timeout=timeout)
+    if res.returncode != 0:
+        raise RuntimeError(f"probe failed:\n{res.stdout}\n{res.stderr}")
+    vals = {}
+    for key in ("probe_ndof", "probe_elements"):
+        for line in res.stdout.splitlines():
+            if line.startswith(key + " "):
+                vals[key] = int(line.split()[1])
+    ndof = vals["probe_ndof"]
+    est = vram_estimate_gb(ndof)
+    gpu_id = prep.model.solver.gpu_ids[0] if prep.model.solver.gpu_ids else 0
+    free = free_vram_gb(gpu_id)
+    # cuDSS refuses above 90% of free VRAM, so compare against that
+    fits = None if free is None else est <= 0.9 * free
+    return Probe(ndof=ndof, elements=vals["probe_elements"],
+                 vram_estimate_gb=est, free_vram_gb=free, fits_on_gpu=fits)
 
 
 def solve_group(

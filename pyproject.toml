@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "mypy", "pyvista"]
+dev = ["pytest", "pytest-xdist", "ruff", "mypy", "pyvista"]
 
 [project.scripts]
 lithofem = "lithofem.cli:main"
@@ -46,4 +46,7 @@ markers = [
     "full: slower tests, part of `lithofem selftest --full` only",
     "gpu: requires a CUDA GPU (auto-skipped when unavailable)",
     "cudss: requires the cuDSS library (auto-skipped when unavailable)",
+    "cpu_reference: pins the CPU solver path itself; never redirected to GPU",
+    "gpu_ok: physics validation that may run on the GPU when one is available",
+    "multigpu: needs every card to itself; serialised against all GPU tests",
 ]

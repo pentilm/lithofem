@@ -132,3 +132,49 @@ def test_corner_refinement(tmp_path: Path) -> None:
     ratio = np.median(far) / np.median(near)
     factor = model.fem.corner_refine_factor or 0.0
     assert ratio >= factor * 0.9, f"refinement ratio {ratio:.2f} < {factor}"
+
+
+# --- v2.6: 3D meshing algorithm -----------------------------------------
+
+@pytest.mark.full
+def test_hxt_matches_delaunay(tmp_path: Path) -> None:
+    """The optional HXT path (fem.mesh_algorithm: hxt) must produce a mesh
+    geometrically equivalent to the default Delaunay one: the same region
+    volumes to round-off, comparable element counts, and positive Jacobians
+    throughout.
+
+    Element-for-element identity is *not* expected — these are different
+    tetrahedralizations of the same domain at the same target size. Nor is
+    equal *accuracy*: at equal target size the ~10% sparser HXT mesh measurably
+    degrade the hardest acceptance case (M8-1 TM vs RCWA), which is why
+    Delaunay is the default and HXT is opt-in for meshing-bound geometries.
+    """
+    import os
+
+    model = config.expand(CASES[0])
+    results = {}
+    for name, algo in (("hxt", "10"), ("delaunay", "1")):
+        os.environ["LITHOFEM_MESH_ALGO3D"] = algo
+        try:
+            path = tmp_path / f"{name}.msh"
+            info = meshgen.generate(model, path)
+            results[name] = (info, meshcheck.load_stats(str(path)))
+        finally:
+            os.environ.pop("LITHOFEM_MESH_ALGO3D", None)
+
+    (info_h, st_h), (info_d, st_d) = results["hxt"], results["delaunay"]
+
+    # same geometry: per-region volumes agree to round-off
+    assert set(info_h.region_volumes) == set(info_d.region_volumes)
+    for attr, vol_h in info_h.region_volumes.items():
+        vol_d = info_d.region_volumes[attr]
+        assert abs(vol_h - vol_d) <= 1e-9 * abs(vol_d), (attr, vol_h, vol_d)
+
+    # same resolution: element counts within 25% (different tetrahedralizations
+    # of the same size field, not the same mesh)
+    n_h, n_d = st_h.n_tets, st_d.n_tets
+    assert 0.75 < n_h / n_d < 1.33, (n_h, n_d)
+
+    # HXT output is a valid mesh in its own right
+    assert st_h.min_jacobian > 0.0, st_h.min_jacobian
+    assert st_h.n_hanging_faces == 0, st_h.n_hanging_faces

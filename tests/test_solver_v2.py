@@ -107,7 +107,11 @@ def test_v2m2_line_grating_gpu_vs_cpu(tmp_path: Path) -> None:
         eff_cpu = outputs.order_efficiencies(prep_cpu, 0, plane, 1.0 + 0j, sgn)
         assert set(eff_gpu) == set(eff_cpu)
         for k in eff_cpu:
-            assert abs(eff_gpu[k] - eff_cpu[k]) <= 1e-8 * max(abs(eff_cpu[k]), 1e-30), (
+            # 1e-8 relative for physically significant orders; absolute for the
+            # evanescent tail, where efficiencies are numerical zeros (~1e-12)
+            # and a relative criterion would demand agreement below double
+            # precision (same convention as test_solver_m8._compare)
+            assert abs(eff_gpu[k] - eff_cpu[k]) <= 1e-8 * max(abs(eff_cpu[k]), 1e-3), (
                 k, eff_gpu[k], eff_cpu[k])
 
 
@@ -123,7 +127,7 @@ def test_v2m2_square_hole_gpu_vs_cpu(tmp_path: Path) -> None:
     eff_gpu = outputs.order_efficiencies(prep_gpu, 0, 0, 1.0 + 0j, +1)
     eff_cpu = outputs.order_efficiencies(prep_cpu, 0, 0, 1.0 + 0j, +1)
     for k in eff_cpu:
-        assert abs(eff_gpu[k] - eff_cpu[k]) <= 1e-8 * max(abs(eff_cpu[k]), 1e-30)
+        assert abs(eff_gpu[k] - eff_cpu[k]) <= 1e-8 * max(abs(eff_cpu[k]), 1e-3)
 
 
 def test_v2m2_per_source_factor_reuse(tmp_path: Path) -> None:

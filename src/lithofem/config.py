@@ -106,6 +106,8 @@ class FemParams:
     corner_refine_radius: float | None = None
     corner_refine_factor: float | None = None
     assembly: str = "cpu"  # cpu | gpu (v2.5: GPU matrix assembly)
+    mesh_threads: int = 1  # >1 meshes faster but is not bit-reproducible
+    mesh_algorithm: str = "delaunay"  # delaunay | hxt (faster, coarser; see docs)
 
 
 @dataclass(frozen=True)
@@ -524,6 +526,21 @@ def _parse_fem(f: dict[str, Any], ctx: _Ctx) -> FemParams:
                 "use e.g. order: 3")
         order = 3
     cr = f.get("corner_refine") or {}
+    try:
+        mesh_threads = int(f.get("mesh_threads", 1))
+        if mesh_threads < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        ctx.err("fem.mesh_threads",
+                f"must be a positive integer, got {f.get('mesh_threads')!r}",
+                "use 1 (default, reproducible) or a thread count")
+        mesh_threads = 1
+    mesh_algorithm = f.get("mesh_algorithm", "delaunay")
+    if mesh_algorithm not in ("delaunay", "hxt"):
+        ctx.err("fem.mesh_algorithm",
+                f"must be delaunay|hxt, got {mesh_algorithm!r}",
+                "delaunay is the accuracy-neutral default")
+        mesh_algorithm = "delaunay"
     assembly = f.get("assembly", "cpu")
     if assembly not in ("cpu", "gpu"):
         ctx.err("fem.assembly", f"must be cpu|gpu, got {assembly!r}",
@@ -535,6 +552,8 @@ def _parse_fem(f: dict[str, Any], ctx: _Ctx) -> FemParams:
         corner_refine_radius=float(cr["radius"]) if "radius" in cr else None,
         corner_refine_factor=float(cr["factor"]) if "factor" in cr else None,
         assembly=assembly,
+        mesh_threads=mesh_threads,
+        mesh_algorithm=mesh_algorithm,
     )
 
 
@@ -760,6 +779,8 @@ def model_to_solve_json(model: Model) -> dict[str, Any]:
             "order": model.fem.order,
             "elems_per_wavelength": model.fem.elems_per_wavelength,
             "assembly": model.fem.assembly,
+            "mesh_threads": model.fem.mesh_threads,
+            "mesh_algorithm": model.fem.mesh_algorithm,
             "corner_refine": (
                 {"radius": model.fem.corner_refine_radius,
                  "factor": model.fem.corner_refine_factor}

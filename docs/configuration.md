@@ -105,6 +105,12 @@ fem:
   order: 3                  # Nedelec order, any positive integer
   elems_per_wavelength: 4   # target mesh density (wavelength inside the medium)
   assembly: cpu             # cpu | gpu — GPU matrix assembly (see docs/gpu.md)
+  mesh_algorithm: delaunay  # delaunay (default, accuracy-neutral) | hxt (~2x faster
+                            # meshing, ~10% fewer elements — but at equal resolution the
+                            # hardest TM acceptance case degrades measurably, so hxt is
+                            # for geometries where meshing time genuinely dominates)
+  mesh_threads: 1           # >1 meshes faster but is NOT bit-reproducible run to run;
+                            # measured benefit on the bundled geometries is under 10%
   corner_refine: {radius: 20.0, factor: 4.0}   # optional refinement near frustum corners
 solver:
   type: direct              # direct (sparse LU) | iterative (GMRES, falls back to direct)
@@ -125,6 +131,28 @@ format, then exit), `--import-solution <file>` (read an externally computed
 solution and continue with post-processing), `--mem-limit-gb` (abort if the
 CPU factorization memory estimate exceeds the limit),
 `--gpu-mem-limit-gb` (cuDSS VRAM cap).
+
+## Mesh reuse and pre-flight (v2.6)
+
+```bash
+lithofem run cfg.yaml -o out/ --dry-run              # mesh, report size + VRAM, stop
+lithofem run cfg.yaml -o out/ --mesh prev/mesh.msh   # reuse an existing mesh
+lithofem run cfg.yaml -o out/ --mesh-cache ~/.cache/lithofem   # cache across runs
+```
+
+- `--dry-run` prints the complex unknown count, element count, the estimated
+  GPU memory for the direct solver (an empirical fit to measured cuDSS
+  footprints), and whether it fits on the card — so an oversized run is caught
+  before it silently falls back to the CPU solver.
+- `--mesh` expects the derived solver meshes (`.v22.msh`, and `.per.msh` for
+  periodic models) next to the given `mesh.msh`, i.e. the output of a previous
+  LithoFEM run; their absence is reported immediately.
+- `--mesh-cache` (or `LITHOFEM_MESH_CACHE`) reuses meshes keyed on a content
+  hash of everything the mesher reads. `fem.order`, sources and solver
+  settings are deliberately *not* part of the key, so p-refinement studies and
+  incidence-angle sweeps share one mesh; geometry, wavelength, materials, PML,
+  observation-plane z values, the meshing algorithm and the thread count all
+  invalidate it. Off by default.
 
 ## boundaries.pml
 

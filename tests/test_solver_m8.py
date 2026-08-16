@@ -29,6 +29,7 @@ from .reference import rcwa
 
 pytestmark = [
     pytest.mark.full,
+    pytest.mark.gpu_ok,
     pytest.mark.skipif(not driver.SOLVER_BIN.exists(),
                        reason="lithofem_solve not built"),
 ]

@@ -1,5 +1,14 @@
 # LithoFEM
 
+![LithoFEM — the wordmark is the aerial image of a mask spelling "LithoFEM", computed by LithoFEM itself](assets/logo.png)
+
+*The logo above is not a drawing: it is the solved near field 0.12 wavelengths
+below a chrome mask whose cut-outs spell "LithoFEM" (2.06M complex unknowns,
+GPU assembly + cuDSS; the glow, edge ringing and stroke-proximity effects are
+physical diffraction). See [examples/logo/](examples/logo/) to reproduce it,
+and [assets/logo_diffraction.png](assets/logo_diffraction.png) for the image
+diffracting away from the mask.*
+
 **Rigorous 3D electromagnetic near-field simulation for lithography masks**, using
 frequency-domain vector finite elements on conformal tetrahedral meshes, with
 GPU-accelerated assembly and a GPU sparse direct solver.
@@ -10,6 +19,7 @@ vector Maxwell equations, and writes near fields and diffraction orders.
 
 ```bash
 lithofem run config.yaml -o results/
+lithofem run config.yaml -o results/ --dry-run   # mesh, report size + GPU memory, stop
 lithofem selftest                 # verify a fresh install (--full for the long tier)
 ```
 
